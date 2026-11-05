@@ -1,0 +1,4 @@
+nvEncodeAPI.h from https://github.com/FFmpeg/nv-codec-headers
+commit 1b5a81ada8874efb2af0534ffe74049c557e212d, include/ffnvcodec/nvEncodeAPI.h
+sha256 8776FDDCB8FEBC6AEC4D73989B1F21831EB30306BC583DA55B4BF0C14A1DC228
+MIT licensed, see the header's first lines. Unmodified. The runtime, nvEncodeAPI64.dll, ships with the NVIDIA driver.
