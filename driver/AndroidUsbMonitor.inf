@@ -1,0 +1,62 @@
+[Version]
+PnpLockDown=1
+Signature="$Windows NT$"
+ClassGUID={4D36E968-E325-11CE-BFC1-08002BE10318}
+Class=Display
+ClassVer=2.0
+Provider=%ManufacturerName%
+CatalogFile=AndroidUsbMonitor.cat
+DriverVer=@DRIVER_VER@
+
+[Manufacturer]
+%ManufacturerName%=Standard,NTamd64
+
+[Standard.NTamd64]
+%DeviceName%=AndroidUsbMonitor_Install, AndroidUsbMonitor
+
+[SourceDisksFiles]
+AndroidUsbMonitor.dll=1
+
+[SourceDisksNames]
+1=%DiskName%
+
+[AndroidUsbMonitor_Install.NT]
+Include=WUDFRD.inf
+Needs=WUDFRD.NT
+CopyFiles=UMDriverCopy
+
+[AndroidUsbMonitor_Install.NT.hw]
+Include=WUDFRD.inf
+Needs=WUDFRD.NT.HW
+AddReg=AndroidUsbMonitor_HardwareDeviceSettings
+
+[AndroidUsbMonitor_HardwareDeviceSettings]
+HKR,,"UpperFilters",%REG_MULTI_SZ%,"IndirectKmd"
+HKR,"WUDF","DeviceGroupId",%REG_SZ%,"AndroidUsbMonitorGroup"
+
+[AndroidUsbMonitor_Install.NT.Services]
+Include=WUDFRD.inf
+Needs=WUDFRD.NT.Services
+
+[AndroidUsbMonitor_Install.NT.Wdf]
+UmdfService=AndroidUsbMonitor,AndroidUsbMonitor_UmdfInstall
+UmdfServiceOrder=AndroidUsbMonitor
+UmdfKernelModeClientPolicy=AllowKernelModeClients
+
+[AndroidUsbMonitor_UmdfInstall]
+UmdfLibraryVersion=2.25.0
+ServiceBinary=%12%\UMDF\AndroidUsbMonitor.dll
+UmdfExtensions=IddCx0102
+
+[DestinationDirs]
+UMDriverCopy=12,UMDF
+
+[UMDriverCopy]
+AndroidUsbMonitor.dll
+
+[Strings]
+ManufacturerName="Android USB Monitor"
+DiskName="Android USB Monitor Installation Disk"
+DeviceName="Android USB Monitor Adapter"
+REG_MULTI_SZ=0x00010000
+REG_SZ=0x00000000
