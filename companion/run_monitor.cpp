@@ -8,6 +8,7 @@
 #include "gpu_clock_holder.h"
 #include "latency_stats.h"
 #include "motion_window.h"
+#include "panel_rate_source.h"
 #include "panel_spec.h"
 #include "pattern_source.h"
 #include "phone_cadence.h"
@@ -45,6 +46,9 @@ constexpr DWORD kScreenSettleSeconds = 3;
 constexpr double kRefreshTolerance = 0.01;
 constexpr double kDpiTolerance = 0.03;
 constexpr double kRequiredFpsRatio = 0.99;
+// Composing an indirect display at the panel's own rate, Windows itself loses frames: on one PC about 80 fps for 2 s out of every
+// 12.5 s, with no encoding or link involved. At twice that rate, one frame per panel period always reaches the panel.
+constexpr int kDefaultComposeMultiple = 2;
 
 HANDLE stopEvent = nullptr;
 
@@ -57,7 +61,7 @@ void PrintCheck(bool passed, const std::string& what) {
     std::printf("  %s %s\n", passed ? "PASS" : "FAIL", what.c_str());
 }
 
-// Requirement 4: Windows must see exactly the panel's native mode, and nothing else.
+// Requirement 4: Windows must see exactly one mode, the panel's resolution and size at the rate it composes the monitor.
 bool VerifyNativeMode(const ActiveDisplay& display, const PanelSpec& spec, const std::vector<std::uint8_t>& sentEdid) {
     std::puts("native mode check (what Windows now reports):");
     bool allPassed = true;
@@ -74,11 +78,11 @@ bool VerifyNativeMode(const ActiveDisplay& display, const PanelSpec& spec, const
     const std::uint32_t wholeHz = static_cast<std::uint32_t>(std::lround(spec.refreshHz));
     const bool onlyNative = modes.size() == 1 && modes[0].width == spec.width && modes[0].height == spec.height &&
                             std::abs(static_cast<int>(modes[0].frequencyHz) - static_cast<int>(wholeHz)) <= 1;
-    check(onlyNative, "only the native mode is offered: " + modeList);
+    check(onlyNative, "only one mode is offered: " + modeList);
 
     const double windowsHz = display.vSyncDenominator ? static_cast<double>(display.vSyncNumerator) / display.vSyncDenominator : 0;
     char refreshText[128];
-    sprintf_s(refreshText, "refresh rate: phone %.5f Hz, Windows %u/%u = %.5f Hz", spec.refreshHz, display.vSyncNumerator, display.vSyncDenominator, windowsHz);
+    sprintf_s(refreshText, "refresh rate: composing at %.5f Hz, Windows %u/%u = %.5f Hz", spec.refreshHz, display.vSyncNumerator, display.vSyncDenominator, windowsHz);
     check(std::abs(windowsHz - spec.refreshHz) < kRefreshTolerance, refreshText);
 
     const auto storedEdid = ReadEdidFromRegistry(display.devicePath);
@@ -252,7 +256,13 @@ int RunMonitor(const Options& options) {
                                  ", not the native mode: pixels would not map 1:1");
     }
 
-    const std::vector<std::uint8_t> edid = BuildEdid(spec);
+    const int composeMultiple = static_cast<int>(options.Number(L"compose-multiple", kDefaultComposeMultiple));
+    if (composeMultiple < 1) {
+        throw std::runtime_error("--compose-multiple must be at least 1");
+    }
+    PanelSpec composedSpec = spec;
+    composedSpec.refreshHz = spec.refreshHz * composeMultiple;
+    const std::vector<std::uint8_t> edid = BuildEdid(composedSpec);
     const Rational refresh = SnapRefreshRate(spec.refreshHz);
 
     const std::wstring sourceName = options.Text(L"source", L"virtual");
@@ -270,7 +280,7 @@ int RunMonitor(const Options& options) {
         if (!display) {
             throw std::runtime_error("Windows did not activate the monitor; press Win+P and choose Extend");
         }
-        VerifyNativeMode(*display, spec, edid);
+        VerifyNativeMode(*display, composedSpec, edid);
         ReportEndpointChange(endpointsBefore);
         if (sourceName != L"dda") {
             captureAdapter = TapSource::WaitForRenderAdapter(kSwapChainTimeoutMs);
@@ -303,6 +313,10 @@ int RunMonitor(const Options& options) {
     if (!source) {
         source = std::make_unique<DdaSource>(gpu, display->gdiName);
         std::puts("frame source: Desktop Duplication");
+    }
+    if (monitor && composeMultiple > 1) {
+        source = std::make_unique<PanelRateSource>(std::move(source), refresh);
+        std::printf("Windows composes at %.3f Hz, the phone gets one frame per panel period\n", composedSpec.refreshHz);
     }
 
     FILE* csv = nullptr;

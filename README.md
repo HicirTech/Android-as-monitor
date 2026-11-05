@@ -1,6 +1,6 @@
 # Android USB Monitor
 
-Spike: an Android phone, without root, becomes a Windows display over one USB cable, showing only its panel's native mode with picture and sound in one low-latency stream.
+Spike: an Android phone, without root, becomes a Windows display over one USB cable, at its panel's own resolution, size and refresh rate, with picture and sound in one low-latency stream.
 
 | Part | Runs on | Role |
 | --- | --- | --- |
@@ -27,6 +27,8 @@ Then, from an elevated PowerShell, with the companion stopped: `tools\install-dr
 Connect the phone, unlock it, and tap "Got it" if Android explains full screen the first time. Set the phone to its highest refresh rate, or Android only offers 60 Hz. With more than one device attached, add `--serial <serial>`.
 
 The monitor renders and encodes on the NVIDIA GPU when there is one, through NVENC; any other GPU uses Media Foundation. `--render-adapter NAME` picks the GPU.
+
+Windows sees the monitor at twice the panel's refresh rate, and the phone gets one frame per panel period. Composing an indirect display at the panel's own rate, Windows loses frames in bursts; `--compose-multiple 1` shows it.
 
 ```powershell
 out\companion\aum-companion.exe run --source pattern --seconds 30 --audio-endpoint tone   # whole pipeline, no driver needed
