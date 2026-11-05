@@ -1,0 +1,56 @@
+# Android USB Monitor
+
+Spike: an Android phone, without root, becomes a Windows display over one USB cable, showing only its panel's native mode with picture and sound in one low-latency stream.
+
+| Part | Runs on | Role |
+| --- | --- | --- |
+| `android/` | Android 13+, USB debugging on | Reports the panel, decodes and shows frames 1:1, plays sound |
+| `companion/` | Windows 11, unelevated | Builds the EDID, captures, encodes, streams through `adb reverse` |
+| `driver/` | Windows 11, UMDF | Virtual display (IddCx) that offers exactly one mode, the one in the EDID |
+
+## Set up
+
+The APK build needs a JDK 17 or newer and the Android SDK with platform 36, through `JAVA_HOME` and `ANDROID_HOME`.
+
+```powershell
+tools\get-toolchain.ps1     # private MSVC, SDK and WDK in %LOCALAPPDATA%\usb-monitor-toolchain
+tools\build-driver.ps1
+tools\build-companion.ps1
+tools\build-apk.ps1
+adb install -r android\app\build\outputs\apk\release\app-release.apk
+```
+
+Then, from an elevated PowerShell, with the companion stopped: `tools\install-driver.ps1`. `tools\uninstall-driver.ps1` removes everything it added. Rerun the install after each driver rebuild.
+
+## Run
+
+Connect the phone, unlock it, and tap "Got it" if Android explains full screen the first time. Set the phone to its highest refresh rate, or Android only offers 60 Hz. With more than one device attached, add `--serial <serial>`.
+
+The monitor renders and encodes on the NVIDIA GPU when there is one, through NVENC; any other GPU uses Media Foundation. `--render-adapter NAME` picks the GPU.
+
+```powershell
+out\companion\aum-companion.exe run --source pattern --seconds 30 --audio-endpoint tone   # whole pipeline, no driver needed
+out\companion\aum-companion.exe run --seconds 30                                          # native mode check and frame rate test
+out\companion\aum-companion.exe run                                                       # use it as a monitor; Ctrl+C unplugs it
+```
+
+| Command | Purpose |
+| --- | --- |
+| `run` | Plugs the monitor in and streams; prints PASS/FAIL checks and per-stage latency each second |
+| `encoder-bench` | Measures capture to bitstream with no phone; `--pattern scroll` is the worst case, `--dump` saves the bitstream |
+| `inspect-displays` | Shows what Windows reports for every display, and the playback endpoints |
+
+Runs with `--seconds` also read SurfaceFlinger's present times: the `on screen` and `capture to on screen` lines and the PASS or FAIL are what really reached the panel, and `panel` is the rate it really runs at. Keep the PC awake and unlocked: with its screen off, Windows gives the virtual monitor no frames and timers run late.
+
+`tools\driver-events.ps1` prints the driver's messages from the Application event log.
+
+## Structure
+
+```text
+android/        App: PanelSpec reads the panel, StreamSession owns the link, VideoDecoder and AudioPlayer play it, VsyncSlots gives each frame its own vsync
+companion/      PC program: run_monitor is the flow, edid builds the monitor description, video_pipeline drops frames before encoding, never after, nvenc_encoder and mf_encoder encode, gpu_clock_holder keeps NVIDIA out of its idle clocks, phone_cadence reads what reached the panel
+driver/         IddCx driver: control_pipe unplugs the monitor when the companion goes away, frame_tap shares desktop frames with the companion
+shared/         What both sides must agree on: driver protocol, stream protocol, EDID timing
+third_party/    nvEncodeAPI.h at a pinned commit, see SOURCE.txt
+tools/          Toolchain, build, driver install and check scripts
+```
