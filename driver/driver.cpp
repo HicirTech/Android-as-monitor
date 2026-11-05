@@ -123,8 +123,8 @@ _Use_decl_annotations_ static NTSTATUS OnParseMonitorDescription(const IDARG_IN_
                                                                  IDARG_OUT_PARSEMONITORDESCRIPTION* out) {
     static constexpr UINT kModeCount = 1;
 
-    const auto timing = aum::ParseFirstDetailedTiming(static_cast<const std::uint8_t*>(args->MonitorDescription.pData),
-                                                      args->MonitorDescription.DataSize);
+    const auto timing = aum::ParseNativeTiming(static_cast<const std::uint8_t*>(args->MonitorDescription.pData),
+                                               args->MonitorDescription.DataSize);
     if (!timing) {
         return STATUS_INVALID_PARAMETER;
     }

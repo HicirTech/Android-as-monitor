@@ -23,6 +23,7 @@ constexpr std::uint32_t kVSyncWidth = 5;
 constexpr std::uint32_t kMaxDetailedActive = 4095;
 constexpr std::uint32_t kMaxDetailedBlank = 4095;
 constexpr std::uint64_t kMaxDetailedClockUnits = 65535;
+constexpr std::uint64_t kMaxDisplayIdClockUnits = 0xFFFFFF;
 constexpr std::uint32_t kMaxDetailedImageMm = 4095;
 constexpr double kSnapToleranceHz = 0.02;
 
@@ -108,6 +109,51 @@ void WriteCtaExtension(std::uint8_t* block) {
     WriteChecksum(block);
 }
 
+// DisplayID 1.3 with one Type I timing, which is where high refresh monitors state a mode whose clock needs more than 16 bits.
+void WriteDisplayIdExtension(std::uint8_t* block, const DetailedTiming& t) {
+    static constexpr std::uint8_t kDisplayIdVersion = 0x13;
+    static constexpr std::uint8_t kPreferredWithUndefinedAspectRatio = 0x88;
+    static constexpr std::uint32_t kPositiveSyncPolarity = 0x8000;
+    static constexpr std::size_t kSectionBytes = kDisplayIdDataBlockHeaderBytes + kDisplayIdTypeOneTimingBytes;
+
+    block[0] = kDisplayIdExtensionTag;
+    block[1] = kDisplayIdVersion;
+    block[2] = static_cast<std::uint8_t>(kSectionBytes);
+    // Bytes 3 and 4 stay zero: this is an extension section, and no further sections follow it.
+    std::uint8_t* dataBlock = block + kDisplayIdFirstDataBlockOffset;
+    dataBlock[0] = kDisplayIdTypeOneTimingTag;
+    dataBlock[2] = static_cast<std::uint8_t>(kDisplayIdTypeOneTimingBytes);
+
+    // Type I fields hold each value minus one.
+    std::uint8_t* d = dataBlock + kDisplayIdDataBlockHeaderBytes;
+    const std::uint64_t clockUnits = t.pixelClockHz / kDetailedTimingClockUnitHz - 1;
+    d[0] = static_cast<std::uint8_t>(clockUnits & 0xFF);
+    d[1] = static_cast<std::uint8_t>((clockUnits >> 8) & 0xFF);
+    d[2] = static_cast<std::uint8_t>((clockUnits >> 16) & 0xFF);
+    d[3] = kPreferredWithUndefinedAspectRatio;
+    const auto writeField = [d](std::size_t offset, std::uint32_t value) {
+        d[offset] = static_cast<std::uint8_t>(value & 0xFF);
+        d[offset + 1] = static_cast<std::uint8_t>(value >> 8);
+    };
+    writeField(4, t.hActive - 1);
+    writeField(6, t.hBlank - 1);
+    writeField(8, (kHFrontPorch - 1) | kPositiveSyncPolarity);
+    writeField(10, kHSyncWidth - 1);
+    writeField(12, t.vActive - 1);
+    writeField(14, t.vBlank - 1);
+    writeField(16, (kVFrontPorch - 1) | kPositiveSyncPolarity);
+    writeField(18, kVSyncWidth - 1);
+
+    // The section has its own checksum, over everything after the tag, in the byte right after its data blocks.
+    const std::size_t checksumOffset = kDisplayIdFirstDataBlockOffset + kSectionBytes;
+    std::uint8_t sum = 0;
+    for (std::size_t i = 1; i < checksumOffset; ++i) {
+        sum = static_cast<std::uint8_t>(sum + block[i]);
+    }
+    block[checksumOffset] = static_cast<std::uint8_t>(0x100 - sum);
+    WriteChecksum(block);
+}
+
 }  // namespace
 
 Rational SnapRefreshRate(double reportedHz) {
@@ -118,9 +164,9 @@ Rational SnapRefreshRate(double reportedHz) {
     return Reduce(static_cast<std::uint64_t>(std::round(reportedHz * 1000.0)), 1000);
 }
 
-DetailedTiming ChooseTiming(std::uint32_t width, std::uint32_t height, Rational refresh, std::uint32_t widthMm, std::uint32_t heightMm) {
+std::optional<DetailedTiming> ChooseTiming(std::uint32_t width, std::uint32_t height, Rational refresh, std::uint32_t widthMm, std::uint32_t heightMm, std::uint64_t maxClockUnits) {
     if (width > kMaxDetailedActive || height > kMaxDetailedActive) {
-        throw std::runtime_error("panel is larger than a detailed timing can describe; needs a DisplayID extension");
+        throw std::runtime_error("panel is larger than the detailed timing every EDID must hold can describe");
     }
     if (widthMm == 0 || heightMm == 0 || widthMm > kMaxDetailedImageMm || heightMm > kMaxDetailedImageMm) {
         throw std::runtime_error("panel physical size is outside what a detailed timing can describe");
@@ -134,7 +180,7 @@ DetailedTiming ChooseTiming(std::uint32_t width, std::uint32_t height, Rational 
             const std::uint64_t total = std::uint64_t{width + hBlank} * (height + vBlank);
             const std::uint64_t idealClockHz = total * refresh.numerator / refresh.denominator;
             const std::uint64_t units = (idealClockHz + kDetailedTimingClockUnitHz / 2) / kDetailedTimingClockUnitHz;
-            if (units == 0 || units > kMaxDetailedClockUnits) {
+            if (units == 0 || units > maxClockUnits) {
                 continue;
             }
             // Exact integer comparison: units * 10000 / total == numerator / denominator.
@@ -148,7 +194,7 @@ DetailedTiming ChooseTiming(std::uint32_t width, std::uint32_t height, Rational 
         }
     }
     if (best.pixelClockHz == 0) {
-        throw std::runtime_error("panel pixel rate exceeds the 655.35 MHz a detailed timing can describe; needs a DisplayID extension");
+        return std::nullopt;
     }
     if (best.hBlank > kMaxDetailedBlank || best.vBlank > kMaxDetailedBlank) {
         throw std::runtime_error("blanking search produced an unencodable timing");
@@ -162,9 +208,27 @@ std::vector<std::uint8_t> BuildEdid(const PanelSpec& spec) {
 
     const std::uint32_t widthMm = static_cast<std::uint32_t>(std::lround(spec.widthMm));
     const std::uint32_t heightMm = static_cast<std::uint32_t>(std::lround(spec.heightMm));
-    const DetailedTiming timing = ChooseTiming(spec.width, spec.height, SnapRefreshRate(spec.refreshHz), widthMm, heightMm);
+    const Rational refresh = SnapRefreshRate(spec.refreshHz);
+    const auto timingAt = [&](Rational rate, std::uint64_t maxClockUnits) { return ChooseTiming(spec.width, spec.height, rate, widthMm, heightMm, maxClockUnits); };
 
-    std::vector<std::uint8_t> edid(2 * kEdidBlockSize, 0);
+    std::optional<DetailedTiming> baseTiming = timingAt(refresh, kMaxDetailedClockUnits);
+    std::optional<DetailedTiming> displayIdTiming;
+    if (!baseTiming) {
+        displayIdTiming = timingAt(refresh, kMaxDisplayIdClockUnits);
+        if (!displayIdTiming) {
+            throw std::runtime_error("no timing reaches the panel's refresh rate of " + std::to_string(refresh.value()) + " Hz");
+        }
+        // The base block must hold a detailed timing, so it states the panel at a fraction of its rate. That never becomes a mode:
+        // the driver offers only the native timing, and Windows takes the modes of an indirect display from its driver.
+        Rational lowerRate = refresh;
+        while (!baseTiming) {
+            lowerRate = Reduce(lowerRate.numerator, lowerRate.denominator * 2);
+            baseTiming = timingAt(lowerRate, kMaxDetailedClockUnits);
+        }
+    }
+
+    const std::size_t extensionCount = displayIdTiming ? 2 : 1;
+    std::vector<std::uint8_t> edid((1 + extensionCount) * kEdidBlockSize, 0);
     std::uint8_t* base = edid.data();
 
     static constexpr std::uint8_t kHeader[8] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
@@ -202,7 +266,7 @@ std::vector<std::uint8_t> BuildEdid(const PanelSpec& spec) {
     // No established or standard timings: the detailed timing is the only mode this monitor has.
     std::fill(base + 38, base + 54, std::uint8_t{0x01});
 
-    WriteDetailedTiming(base + kFirstDetailedTimingOffset, timing);
+    WriteDetailedTiming(base + kFirstDetailedTimingOffset, *baseTiming);
     WriteTextDescriptor(base + kNameDescriptorOffset, kNameDescriptorTag, spec.model);
     char serialText[9];
     sprintf_s(serialText, "%08X", serial);
@@ -210,9 +274,12 @@ std::vector<std::uint8_t> BuildEdid(const PanelSpec& spec) {
     (base + kDummyDescriptorOffset)[3] = kDummyDescriptorTag;
     static_assert(kDummyDescriptorOffset + kDescriptorSize == 126);
 
-    base[126] = 1;
+    base[kExtensionCountOffset] = static_cast<std::uint8_t>(extensionCount);
     WriteChecksum(base);
     WriteCtaExtension(edid.data() + kEdidBlockSize);
+    if (displayIdTiming) {
+        WriteDisplayIdExtension(edid.data() + 2 * kEdidBlockSize, *displayIdTiming);
+    }
     return edid;
 }
 

@@ -84,7 +84,7 @@ NTSTATUS DeviceContext::Plug(const aum::ControlRequest& request, aum::ControlRes
     if (request.edidSize > aum::kMaxEdidBytes) {
         return STATUS_INVALID_PARAMETER;
     }
-    const auto timing = aum::ParseFirstDetailedTiming(request.edid, request.edidSize);
+    const auto timing = aum::ParseNativeTiming(request.edid, request.edidSize);
     if (!timing) {
         LogEvent(L"monitor: rejected EDID of %u bytes", request.edidSize);
         return STATUS_INVALID_PARAMETER;
