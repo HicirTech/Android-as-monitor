@@ -5,7 +5,7 @@ Removes everything tools\install-driver.ps1 added: the virtual adapter, the driv
 #>
 $ErrorActionPreference = 'Stop'
 
-foreach ($device in Get-PnpDevice -InstanceId 'SWD\ANDROIDUSBMONITOR\*' -ErrorAction SilentlyContinue) {
+foreach ($device in Get-PnpDevice -InstanceId 'ROOT\ANDROIDUSBMONITOR\*' -ErrorAction SilentlyContinue) {
     Write-Host "removing device $($device.InstanceId)"
     & pnputil.exe /remove-device $device.InstanceId
 }

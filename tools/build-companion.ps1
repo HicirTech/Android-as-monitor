@@ -15,7 +15,7 @@ $compile += Get-ChildItem $source -Filter *.cpp | Select-Object -ExpandProperty 
 & cl.exe @compile
 if ($LASTEXITCODE -ne 0) { throw 'companion compile failed' }
 
-$libraries = 'd3d11.lib', 'dxgi.lib', 'mfplat.lib', 'mfuuid.lib', 'ole32.lib', 'oleaut32.lib', 'ws2_32.lib', 'user32.lib', 'advapi32.lib', 'avrt.lib', 'shcore.lib', 'onecore.lib'
+$libraries = 'd3d11.lib', 'dxgi.lib', 'mfplat.lib', 'mfuuid.lib', 'ole32.lib', 'oleaut32.lib', 'ws2_32.lib', 'user32.lib', 'advapi32.lib', 'avrt.lib', 'shcore.lib', 'setupapi.lib'
 $link = @('/nologo', '/SUBSYSTEM:CONSOLE', "/OUT:$out\aum-companion.exe", "/PDB:$obj\aum-companion.pdb", '/DEBUG', '/OPT:REF', '/OPT:ICF', '/INCREMENTAL:NO')
 $link += $libraries
 $link += Get-ChildItem $obj -Filter *.obj | Select-Object -ExpandProperty FullName
