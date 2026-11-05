@@ -1,0 +1,44 @@
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+android {
+    namespace 'dev.androidusbmonitor'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'dev.androidusbmonitor'
+        // Choreographer's frame timelines, which give each panel's own vsyncs and deadlines.
+        minSdk 33
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    buildTypes {
+        // Release so that timing measurements are not taken from a debuggable build; signed with the debug key for sideloading.
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+// Runs the app's pure logic on the build machine as a plain main(), like the companion's tests.
+tasks.register('testAppLogic', JavaExec) {
+    dependsOn 'compileReleaseUnitTestKotlin'
+    mainClass = 'dev.androidusbmonitor.VsyncSlotsTestKt'
+    classpath = files(
+        layout.buildDirectory.dir('tmp/kotlin-classes/release'),
+        layout.buildDirectory.dir('tmp/kotlin-classes/releaseUnitTest'),
+        { configurations.releaseUnitTestRuntimeClasspath },
+    )
+}
