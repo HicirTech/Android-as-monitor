@@ -1,5 +1,7 @@
 #include "stream_connection.h"
 
+#include "clock.h"
+
 #include <ws2tcpip.h>
 
 #include <limits>
@@ -8,10 +10,11 @@
 
 namespace aum {
 
-// Small enough that a saturated USB link blocks send() quickly, which stalls the encoder and drops frames before
+// Small enough that a saturated link blocks send() quickly, which stalls the encoder and drops frames before
 // encoding instead of letting stale frames queue up in front of the phone.
 static constexpr int kSendBufferBytes = 512 * 1024;
 static constexpr std::uint32_t kMaxPayloadBytes = 64 * 1024 * 1024;
+static constexpr DWORD kConnectRetryMs = 200;
 
 StreamConnection::StreamConnection(SOCKET socket) : socket_(socket) {
     const BOOL noDelay = TRUE;
@@ -106,6 +109,28 @@ SOCKET StreamListener::Accept(int timeoutMs) {
         return INVALID_SOCKET;
     }
     return accept(socket_, nullptr, nullptr);
+}
+
+SOCKET ConnectStream(const std::string& ipv4Address, std::uint16_t port, int timeoutMs) {
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    if (inet_pton(AF_INET, ipv4Address.c_str(), &address.sin_addr) != 1) {
+        throw std::runtime_error(ipv4Address + " is not an IPv4 address");
+    }
+    const std::int64_t deadlineNs = NowNs() + std::int64_t{timeoutMs} * 1'000'000;
+    while (NowNs() < deadlineNs) {
+        const SOCKET candidate = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (candidate == INVALID_SOCKET) {
+            throw std::runtime_error("socket failed");
+        }
+        if (connect(candidate, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0) {
+            return candidate;
+        }
+        closesocket(candidate);
+        Sleep(kConnectRetryMs);
+    }
+    return INVALID_SOCKET;
 }
 
 }  // namespace aum

@@ -226,17 +226,23 @@ int RunMonitor(const Options& options) {
 
     const Adb adb(Adb::Locate(options.Text(L"adb")), Narrow(options.Text(L"serial")));
     const std::string port = std::to_string(kStreamPort);
+    const std::string wifiAddress = Narrow(options.Text(L"connect"));
+    const bool overWifi = !wifiAddress.empty();
 
     // A copy left running from an earlier session would otherwise connect first and then be killed by the restart.
     adb.Run(std::string("shell am force-stop ") + kAppPackage);
-    StreamListener listener(kStreamPort);
-    adb.Run("reverse localabstract:" + std::string(kStreamSocketName) + " tcp:" + port);
-    adb.Run(std::string("shell am start -n ") + kAppPackage + "/.MainActivity");
+    std::optional<StreamListener> listener;
+    if (!overWifi) {
+        listener.emplace(kStreamPort);
+        adb.Run("reverse localabstract:" + std::string(kStreamSocketName) + " tcp:" + port);
+    }
+    adb.Run(std::string("shell am start -n ") + kAppPackage + "/.MainActivity" + (overWifi ? " --ez wifi true" : ""));
 
     std::puts("waiting for the phone app...");
-    const SOCKET socket = listener.Accept(kPhoneConnectTimeoutMs);
+    const SOCKET socket = overWifi ? ConnectStream(wifiAddress, kStreamPort, kPhoneConnectTimeoutMs) : listener->Accept(kPhoneConnectTimeoutMs);
     if (socket == INVALID_SOCKET) {
-        throw std::runtime_error("the phone app did not connect; is it installed and the screen unlocked?");
+        throw std::runtime_error(overWifi ? "cannot reach the phone app at " + wifiAddress + "; is the address right and the screen unlocked?"
+                                          : "the phone app did not connect; is it installed and the screen unlocked?");
     }
     StreamConnection connection(socket);
 
@@ -247,7 +253,7 @@ int RunMonitor(const Options& options) {
                 spec.avcDecoder.c_str(), spec.avcCoversNative ? "rated" : "not rated");
     std::printf("reported: xdpi %s, ydpi %s, densityDpi %s, modes %s\n", spec.raw.count("xdpi") ? spec.raw.at("xdpi").c_str() : "?", spec.raw.count("ydpi") ? spec.raw.at("ydpi").c_str() : "?",
                 spec.raw.count("densityDpi") ? spec.raw.at("densityDpi").c_str() : "?", spec.raw.count("supportedModes") ? spec.raw.at("supportedModes").c_str() : "?");
-    const std::string usbSpeed = adb.RunOrEmpty("shell cat /sys/class/udc/*/current_speed");
+    const std::string usbSpeed = overWifi ? std::string{} : adb.RunOrEmpty("shell cat /sys/class/udc/*/current_speed");
     if (!usbSpeed.empty()) {
         std::printf("USB link: %s", usbSpeed.c_str());
     }

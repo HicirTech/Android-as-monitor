@@ -24,9 +24,10 @@ if ($LASTEXITCODE -ne 0) { throw 'companion link failed' }
 
 $testObj = Join-Path $root 'out\obj\tests'
 New-Item -ItemType Directory -Force $testObj | Out-Null
-foreach ($test in @{ name = 'edid'; sources = @('edid.cpp') }, @{ name = 'phone_layer'; sources = @('phone_layer.cpp') }, @{ name = 'phone_cadence'; sources = @('phone_cadence.cpp') }, @{ name = 'pending_frame_slot'; sources = @() }, @{ name = 'panel_rate_picker'; sources = @() }) {
+foreach ($test in @{ name = 'edid'; sources = @('edid.cpp') }, @{ name = 'phone_layer'; sources = @('phone_layer.cpp') }, @{ name = 'phone_cadence'; sources = @('phone_cadence.cpp') }, @{ name = 'pending_frame_slot'; sources = @() }, @{ name = 'panel_rate_picker'; sources = @() }, @{ name = 'stream_connection'; sources = @('stream_connection.cpp') }) {
     $testCompile = $common + @("/Fo$testObj\", "/Fd$testObj\vc.pdb", "/Fe:$out\$($test.name)_test.exe", "$source\tests\$($test.name)_test.cpp")
     $testCompile += $test.sources | ForEach-Object { "$source\$_" }
+    $testCompile += 'ws2_32.lib'
     & cl.exe @testCompile
     if ($LASTEXITCODE -ne 0) { throw "$($test.name) test compile failed" }
     & "$out\$($test.name)_test.exe"

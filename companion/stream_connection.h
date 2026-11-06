@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace aum {
@@ -50,5 +51,9 @@ public:
 private:
     SOCKET socket_;
 };
+
+// The PC's end of a Wi-Fi link, where the phone listens. Retries because the phone listens only a moment after its app starts.
+// Returns INVALID_SOCKET once timeoutMs has passed.
+SOCKET ConnectStream(const std::string& ipv4Address, std::uint16_t port, int timeoutMs);
 
 }  // namespace aum

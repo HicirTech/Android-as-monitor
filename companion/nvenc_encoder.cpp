@@ -11,7 +11,7 @@ namespace aum {
 namespace {
 
 // How many frames at the peak rate one frame may use. A single frame is what ultra low latency tuning defaults to, which
-// starves a full-screen change; the USB link is much faster than the peak rate, so the burst costs a millisecond or two.
+// starves a full-screen change; the link is much faster than the peak rate, so the burst costs a millisecond or two.
 constexpr std::uint32_t kVbvFrames = 3;
 constexpr std::uint32_t kPeakToAverageRatio = 2;
 
