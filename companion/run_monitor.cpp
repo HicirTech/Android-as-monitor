@@ -228,6 +228,11 @@ int RunMonitor(const Options& options) {
     const std::string port = std::to_string(kStreamPort);
     const std::string wifiAddress = Narrow(options.Text(L"connect"));
     const bool overWifi = !wifiAddress.empty();
+    // Over Wi-Fi these checks reach the phone through adb on the same radio, and they stalled the picture for seconds at a time.
+    const bool phoneChecks = !overWifi || options.Text(L"phone-checks") == L"on";
+    if (!phoneChecks) {
+        std::puts("phone checks off, they stall the picture over Wi-Fi; --phone-checks on runs them");
+    }
 
     // A copy left running from an earlier session would otherwise connect first and then be killed by the restart.
     adb.Run(std::string("shell am force-stop ") + kAppPackage);
@@ -414,7 +419,7 @@ int RunMonitor(const Options& options) {
         int elapsedSeconds = 0;
         while (WaitForSingleObject(stopEvent, 1000) == WAIT_TIMEOUT) {
             stats.PrintSecond(refresh.value());
-            if (++elapsedSeconds == kPhoneLayerCheckAfterSeconds) {
+            if (++elapsedSeconds == kPhoneLayerCheckAfterSeconds && phoneChecks) {
                 ReportPhoneLayer(adb);
             }
             if (seconds > 0 && static_cast<double>(NowNs() - startedNs) / 1e9 >= seconds) {
@@ -425,7 +430,7 @@ int RunMonitor(const Options& options) {
 
     PhoneCadence cadence;
     std::thread presentSampler;
-    if (seconds > 0) {
+    if (seconds > 0 && phoneChecks) {
         stats.KeepCaptureTimes();
         presentSampler = std::thread([&] { SamplePresentTimes(adb, cadence); });
     }
@@ -460,7 +465,7 @@ int RunMonitor(const Options& options) {
     std::printf("captured %.1f fps, encoded %.1f fps, decoded %.1f fps, %.1f Mbps, dropped before encode %llu, skipped by the phone %llu\n", summary.capturedFps, summary.encodedFps,
                 summary.decodedFps, summary.megabitsPerSecond, summary.droppedBeforeEncode, summary.skippedByPhone);
     stats.PrintEndToEnd();
-    if (seconds > 0) {
+    if (seconds > 0 && phoneChecks) {
         ReportOnScreen(cadence, cadence.CaptureToScreenMs(stats.CapturedBySchedule()), spec.refreshHz, refresh);
     }
     if (csv) {
