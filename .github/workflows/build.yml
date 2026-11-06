@@ -1,0 +1,29 @@
+name: Build
+
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        # The scripts are written for the Windows PowerShell that every Windows 11 has.
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Get the toolchain
+        run: .\tools\get-toolchain.ps1
+      - name: Build the driver
+        run: .\tools\build-driver.ps1
+      - name: Build and test the companion
+        run: .\tools\build-companion.ps1
+      - name: Build and test the app
+        run: .\tools\build-apk.ps1

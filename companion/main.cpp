@@ -11,9 +11,9 @@
 
 static void PrintUsage() {
     std::puts(
-        "aum-companion run            [--source virtual|dda|pattern] [--seconds N] [--codec auto|hevc|h264] [--bitrate-mbps N]\n"
+        "aum-companion run            [--source virtual|dda|pattern] [--seconds N] [--codec auto|hevc|h264] [--bitrate-mbps N] [--compose-multiple N]\n"
         "                             [--audio-endpoint NAME|tone|off] [--render-adapter NAME] [--pattern bands|scroll] [--decoder NAME] [--gpu-hold N]\n"
-        "                             [--serial S] [--adb PATH] [--csv PATH]\n"
+        "                             [--connect IPV4] [--phone-checks on] [--serial S] [--adb PATH] [--csv PATH]\n"
         "aum-companion encoder-bench  [--adapter NAME] [--codec hevc|h264] [--width W] [--height H] [--fps F] [--seconds N]\n"
         "                             [--bitrate-mbps N] [--pattern bands|scroll] [--dump FILE] [--keyframe-at-second N] [--gpu-hold N] [--dda-output \\\\.\\DISPLAYn]\n"
         "aum-companion inspect-displays\n"

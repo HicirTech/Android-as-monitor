@@ -23,23 +23,25 @@ Write-Host 'trusting the local test certificate (LocalMachine Root and TrustedPu
 Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
 Import-Certificate -FilePath $certificate -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
 
-Write-Host 'adding the driver package'
-& pnputil.exe /add-driver $inf /install
-# 259 is ERROR_NO_MORE_ITEMS: the package was added, but no device needed it yet, which is normal on a first install.
-$ERROR_SUCCESS_REBOOT_REQUIRED = 3010
-if ($LASTEXITCODE -eq $ERROR_SUCCESS_REBOOT_REQUIRED) { Write-Host 'Windows asks for a reboot before this build takes effect' }
-elseif ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 259) { throw "pnputil failed with exit code $LASTEXITCODE" }
-
-$device = Get-PnpDevice -InstanceId 'SWD\ANDROIDUSBMONITOR\*' -ErrorAction SilentlyContinue
-if ($device) {
-    Write-Host 'restarting the virtual adapter so that it loads this build'
-    & pnputil.exe /restart-device $device.InstanceId
-} else {
+$device = Get-PnpDevice -PresentOnly -InstanceId 'ROOT\ANDROIDUSBMONITOR\*' -ErrorAction SilentlyContinue
+if (-not $device) {
     Write-Host 'creating the virtual adapter'
     & $companion install-device
     if ($LASTEXITCODE -ne 0) { throw "install-device failed with exit code $LASTEXITCODE" }
 }
 
-Get-PnpDevice -InstanceId 'SWD\ANDROIDUSBMONITOR\*' | Format-Table Status, Class, FriendlyName, InstanceId -AutoSize
+Write-Host 'adding the driver package'
+& pnputil.exe /add-driver $inf /install
+# 259 is ERROR_NO_MORE_ITEMS: the package was added, but no device needed it, as when this build is already installed.
+$ERROR_SUCCESS_REBOOT_REQUIRED = 3010
+if ($LASTEXITCODE -eq $ERROR_SUCCESS_REBOOT_REQUIRED) { Write-Host 'Windows asks for a reboot before this build takes effect' }
+elseif ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 259) { throw "pnputil failed with exit code $LASTEXITCODE" }
+
+if ($device) {
+    Write-Host 'restarting the virtual adapter so that it loads this build'
+    & pnputil.exe /restart-device $device.InstanceId
+}
+
+Get-PnpDevice -InstanceId 'ROOT\ANDROIDUSBMONITOR\*' | Format-Table Status, Class, FriendlyName, InstanceId -AutoSize
 Write-Host 'driver events:'
 & "$PSScriptRoot\driver-events.ps1" -Count 5

@@ -10,6 +10,12 @@ namespace aum {
 inline constexpr std::size_t kEdidBlockSize = 128;
 inline constexpr std::size_t kFirstDetailedTimingOffset = 54;
 inline constexpr std::uint64_t kDetailedTimingClockUnitHz = 10'000;
+inline constexpr std::size_t kExtensionCountOffset = 126;
+inline constexpr std::uint8_t kDisplayIdExtensionTag = 0x70;
+inline constexpr std::uint8_t kDisplayIdTypeOneTimingTag = 0x03;
+inline constexpr std::size_t kDisplayIdFirstDataBlockOffset = 5;
+inline constexpr std::size_t kDisplayIdDataBlockHeaderBytes = 3;
+inline constexpr std::size_t kDisplayIdTypeOneTimingBytes = 20;
 
 struct DetailedTiming {
     std::uint32_t hActive;
@@ -48,7 +54,38 @@ inline bool HasValidChecksum(const std::uint8_t* block) {
     return sum == 0;
 }
 
-inline std::optional<DetailedTiming> ParseFirstDetailedTiming(const std::uint8_t* edid, std::size_t size) {
+// The first Type I timing of a DisplayID extension block. Its fields hold each value minus one, its clock has 24 bits and it
+// says nothing about the physical size.
+inline std::optional<DetailedTiming> ReadDisplayIdTiming(const std::uint8_t* block) {
+    const std::size_t sectionEnd = kDisplayIdFirstDataBlockOffset + block[2];
+    if (block[0] != kDisplayIdExtensionTag || !HasValidChecksum(block) || sectionEnd >= kEdidBlockSize) {
+        return std::nullopt;
+    }
+    std::size_t offset = kDisplayIdFirstDataBlockOffset;
+    while (offset + kDisplayIdDataBlockHeaderBytes <= sectionEnd) {
+        const std::size_t payloadBytes = block[offset + 2];
+        const std::size_t next = offset + kDisplayIdDataBlockHeaderBytes + payloadBytes;
+        if (next > sectionEnd) {
+            return std::nullopt;
+        }
+        if (block[offset] == kDisplayIdTypeOneTimingTag && payloadBytes >= kDisplayIdTypeOneTimingBytes) {
+            const std::uint8_t* d = block + offset + kDisplayIdDataBlockHeaderBytes;
+            const auto field = [d](std::size_t at) { return (std::uint32_t{d[at]} | (std::uint32_t{d[at + 1]} << 8)) + 1; };
+            DetailedTiming timing{};
+            timing.pixelClockHz = ((std::uint64_t{d[0]} | (std::uint64_t{d[1]} << 8) | (std::uint64_t{d[2]} << 16)) + 1) * kDetailedTimingClockUnitHz;
+            timing.hActive = field(4);
+            timing.hBlank = field(6);
+            timing.vActive = field(12);
+            timing.vBlank = field(14);
+            return timing;
+        }
+        offset = next;
+    }
+    return std::nullopt;
+}
+
+// The panel's native mode: the DisplayID timing when the EDID has one, otherwise its first detailed timing.
+inline std::optional<DetailedTiming> ParseNativeTiming(const std::uint8_t* edid, std::size_t size) {
     static constexpr std::uint8_t header[8] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
     if (size < kEdidBlockSize || !HasValidChecksum(edid)) {
         return std::nullopt;
@@ -73,6 +110,15 @@ inline std::optional<DetailedTiming> ParseFirstDetailedTiming(const std::uint8_t
     timing.vBlank = d[6] | (std::uint32_t{d[7] & 0x0Fu} << 8);
     timing.widthMm = d[12] | (std::uint32_t{d[14] & 0xF0u} << 4);
     timing.heightMm = d[13] | (std::uint32_t{d[14] & 0x0Fu} << 8);
+
+    for (std::size_t index = 1; index <= edid[kExtensionCountOffset] && (index + 1) * kEdidBlockSize <= size; ++index) {
+        auto displayIdTiming = ReadDisplayIdTiming(edid + index * kEdidBlockSize);
+        if (displayIdTiming) {
+            displayIdTiming->widthMm = timing.widthMm;
+            displayIdTiming->heightMm = timing.heightMm;
+            return displayIdTiming;
+        }
+    }
     return timing;
 }
 

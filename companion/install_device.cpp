@@ -1,48 +1,35 @@
+#include <initguid.h>
+
 #include "commands.h"
 #include "win_error.h"
 
-#include <swdevice.h>
-
-#include <cstdio>
-#include <stdexcept>
+#include <setupapi.h>
+#include <devguid.h>
 
 namespace aum {
 
-struct CreationResult {
-    HANDLE done;
-    HRESULT status;
-};
-
-static VOID WINAPI OnCreated(HSWDEVICE, HRESULT status, PVOID context, PCWSTR instanceId) {
-    auto* result = static_cast<CreationResult*>(context);
-    result->status = status;
-    std::printf("device %s: 0x%08lX\n", instanceId ? Narrow(instanceId).c_str() : "(none)", static_cast<unsigned long>(status));
-    SetEvent(result->done);
-}
-
-// Needs elevation. The device outlives this process and comes back after a reboot; it stays an idle display adapter
-// with no monitor until the companion plugs one in.
+// Needs elevation. A root-enumerated device stays across reboots, where a software device would not come back; it is an idle
+// display adapter with no monitor until the companion plugs one in. Installing the driver package is what binds a driver to it.
 int RunInstallDevice() {
-    static constexpr DWORD kInstallTimeoutMs = 60000;
+    static constexpr wchar_t kDeviceName[] = L"AndroidUsbMonitor";
+    // A multi-string: the literal's own terminator is the second of the two it must end with.
+    static constexpr wchar_t kHardwareIds[] = L"AndroidUsbMonitor\0";
 
-    SW_DEVICE_CREATE_INFO info{};
-    info.cbSize = sizeof(info);
-    info.pszInstanceId = L"AndroidUsbMonitor";
-    info.pszzHardwareIds = L"AndroidUsbMonitor\0\0";
-    info.pszzCompatibleIds = L"AndroidUsbMonitor\0\0";
-    info.pszDeviceDescription = L"Android USB Monitor Adapter";
-    info.CapabilityFlags = SWDeviceCapabilitiesRemovable | SWDeviceCapabilitiesSilentInstall | SWDeviceCapabilitiesDriverRequired;
-
-    CreationResult result{CreateEventW(nullptr, TRUE, FALSE, nullptr), E_PENDING};
-    HSWDEVICE device = nullptr;
-    ThrowIfFailed(SwDeviceCreate(L"AndroidUsbMonitor", L"HTREE\\ROOT\\0", &info, 0, nullptr, OnCreated, &result, &device), "SwDeviceCreate");
-    if (WaitForSingleObject(result.done, kInstallTimeoutMs) != WAIT_OBJECT_0) {
-        throw std::runtime_error("the device did not finish installing in time");
+    const HDEVINFO devices = SetupDiCreateDeviceInfoList(&GUID_DEVCLASS_DISPLAY, nullptr);
+    if (devices == INVALID_HANDLE_VALUE) {
+        ThrowIfFailed(HRESULT_FROM_WIN32(GetLastError()), "SetupDiCreateDeviceInfoList");
     }
-    ThrowIfFailed(result.status, "device creation");
-    ThrowIfFailed(SwDeviceSetLifetime(device, SWDeviceLifetimeParentPresent), "SwDeviceSetLifetime");
-    SwDeviceClose(device);
-    CloseHandle(result.done);
+    SP_DEVINFO_DATA device{};
+    device.cbSize = sizeof(device);
+    const BOOL created =
+        SetupDiCreateDeviceInfoW(devices, kDeviceName, &GUID_DEVCLASS_DISPLAY, L"Android USB Monitor Adapter", nullptr, DICD_GENERATE_ID, &device) &&
+        SetupDiSetDeviceRegistryPropertyW(devices, &device, SPDRP_HARDWAREID, reinterpret_cast<const BYTE*>(kHardwareIds), sizeof(kHardwareIds)) &&
+        SetupDiCallClassInstaller(DIF_REGISTERDEVICE, devices, &device);
+    const DWORD error = GetLastError();
+    SetupDiDestroyDeviceInfoList(devices);
+    if (!created) {
+        ThrowIfFailed(HRESULT_FROM_WIN32(error), "creating the root device");
+    }
     return 0;
 }
 

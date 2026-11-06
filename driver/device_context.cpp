@@ -5,7 +5,7 @@
 #include "monitor_context.h"
 
 // The OS keeps presenting the last frame this many times after the desktop goes idle,
-// which lets a low-latency rate controlled encoder refine static text.
+// which lets a low-latency rate controlled encoder refine static text. IddCxAdapterInitAsync refuses 120.
 static constexpr UINT kStaticDesktopReencodeFrames = 60;
 
 void DeviceContext::InitAdapter() {
@@ -84,7 +84,7 @@ NTSTATUS DeviceContext::Plug(const aum::ControlRequest& request, aum::ControlRes
     if (request.edidSize > aum::kMaxEdidBytes) {
         return STATUS_INVALID_PARAMETER;
     }
-    const auto timing = aum::ParseFirstDetailedTiming(request.edid, request.edidSize);
+    const auto timing = aum::ParseNativeTiming(request.edid, request.edidSize);
     if (!timing) {
         LogEvent(L"monitor: rejected EDID of %u bytes", request.edidSize);
         return STATUS_INVALID_PARAMETER;

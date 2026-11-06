@@ -20,7 +20,7 @@ int RunInspectDisplays() {
         std::printf("  %zu distinct modes\n", modes.size());
 
         const auto edid = ReadEdidFromRegistry(display.devicePath);
-        const auto timing = ParseFirstDetailedTiming(edid.data(), edid.size());
+        const auto timing = ParseNativeTiming(edid.data(), edid.size());
         if (timing) {
             const Rational refresh = RefreshRate(*timing);
             std::printf("  EDID %zu bytes: %ux%u at %.3f Hz, %ux%u mm\n", edid.size(), timing->hActive, timing->vActive, refresh.value(), timing->widthMm, timing->heightMm);

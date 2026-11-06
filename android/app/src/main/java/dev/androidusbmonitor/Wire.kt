@@ -4,6 +4,11 @@ import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import java.io.BufferedInputStream
 import java.io.DataInputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -22,10 +27,12 @@ object PacketType {
 
 const val FLAG_KEYFRAME = 0x01
 const val STREAM_SOCKET_NAME = "android_usb_monitor"
+const val STREAM_PORT = 27183
 
 private const val HEADER_BYTES = 16
 private const val RECEIVE_BUFFER_BYTES = 2 * 1024 * 1024
 private const val INPUT_BUFFER_BYTES = 256 * 1024
+private const val ACCEPT_TIMEOUT_MS = 250
 
 class Packet {
     var type = 0
@@ -35,9 +42,8 @@ class Packet {
     var payload = ByteArray(512 * 1024)
 }
 
-class Connection private constructor(private val socket: LocalSocket) {
-    private val input = DataInputStream(BufferedInputStream(socket.inputStream, INPUT_BUFFER_BYTES))
-    private val output = socket.outputStream
+class Connection private constructor(stream: InputStream, private val output: OutputStream, private val closeSocket: () -> Unit) {
+    private val input = DataInputStream(BufferedInputStream(stream, INPUT_BUFFER_BYTES))
     private val headerIn = ByteArray(HEADER_BYTES)
     private val headerInView = ByteBuffer.wrap(headerIn).order(ByteOrder.LITTLE_ENDIAN)
     private val sendLock = Any()
@@ -63,12 +69,7 @@ class Connection private constructor(private val socket: LocalSocket) {
         }
     }
 
-    fun close() {
-        // Closing a LocalSocket alone does not wake a thread blocked reading from it.
-        runCatching { socket.shutdownInput() }
-        runCatching { socket.shutdownOutput() }
-        runCatching { socket.close() }
-    }
+    fun close() = closeSocket()
 
     companion object {
         private val EMPTY = ByteArray(0)
@@ -77,7 +78,33 @@ class Connection private constructor(private val socket: LocalSocket) {
             val socket = LocalSocket()
             socket.connect(LocalSocketAddress(STREAM_SOCKET_NAME))
             socket.receiveBufferSize = RECEIVE_BUFFER_BYTES
-            return Connection(socket)
+            return Connection(socket.inputStream, socket.outputStream) {
+                // Closing a LocalSocket alone does not wake a thread blocked reading from it.
+                runCatching { socket.shutdownInput() }
+                runCatching { socket.shutdownOutput() }
+                runCatching { socket.close() }
+            }
+        }
+
+        fun over(socket: Socket): Connection {
+            socket.tcpNoDelay = true
+            return Connection(socket.inputStream, socket.outputStream) { runCatching { socket.close() } }
         }
     }
+}
+
+// The phone's end of a Wi-Fi link. The phone listens so that Windows needs no inbound firewall rule.
+class ConnectionListener(address: InetSocketAddress) : AutoCloseable {
+    private val server = ServerSocket().apply {
+        reuseAddress = true
+        // Set before binding, because accepted sockets negotiate their window from it.
+        receiveBufferSize = RECEIVE_BUFFER_BYTES
+        soTimeout = ACCEPT_TIMEOUT_MS
+        bind(address)
+    }
+
+    // Throws SocketTimeoutException when no PC came, so that a stopped session is not left waiting for one.
+    fun accept() = Connection.over(server.accept())
+
+    override fun close() = server.close()
 }

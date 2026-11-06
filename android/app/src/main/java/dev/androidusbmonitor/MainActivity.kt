@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Color
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
+import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -21,6 +22,8 @@ import android.widget.TextView
 
 private const val MODE_SWITCH_TIMEOUT_MS = 1500L
 private const val DEFAULT_AUDIO_SAMPLE_RATE = 48000
+private const val EXTRA_WIFI = "wifi"
+private const val WIFI_LOCK_TAG = "AndroidUsbMonitor"
 
 class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayListener {
     private lateinit var surfaceView: SurfaceView
@@ -33,10 +36,16 @@ class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayL
     private var hasWindowFocus = false
     private var modeSettled = false
     private var session: StreamSession? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private val overWifi get() = intent.getBooleanExtra(EXTRA_WIFI, false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureWindow()
+        if (overWifi) {
+            // Wi-Fi power save collapses the stream for seconds otherwise. Android applies this only with the app in front and the screen on.
+            wifiLock = getSystemService(WifiManager::class.java).createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, WIFI_LOCK_TAG).apply { acquire() }
+        }
 
         surfaceView = SurfaceView(this)
         status = TextView(this).apply {
@@ -141,6 +150,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayL
             target,
             hello,
             display.presentationDeadlineNanos,
+            overWifi,
             onStreaming = { mainHandler.post { status.visibility = View.GONE } },
             onWaiting = {
                 mainHandler.post {
@@ -159,6 +169,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayL
     override fun onDestroy() {
         getSystemService(DisplayManager::class.java).unregisterDisplayListener(this)
         stopSession()
+        wifiLock?.release()
         super.onDestroy()
     }
 }
