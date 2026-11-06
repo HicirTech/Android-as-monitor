@@ -1,11 +1,11 @@
 # Android USB Monitor
 
-Spike: an Android phone, without root, becomes a Windows display over one USB cable, at its panel's own resolution, size and refresh rate, with picture and sound in one low-latency stream.
+Spike: an Android phone, without root, becomes a Windows display over one USB cable or Wi-Fi, at its panel's own resolution, size and refresh rate, with picture and sound in one low-latency stream.
 
 | Part | Runs on | Role |
 | --- | --- | --- |
-| `android/` | Android 13+, USB debugging on | Reports the panel, decodes and shows frames 1:1, plays sound |
-| `companion/` | Windows 11, unelevated | Builds the EDID, captures, encodes, streams through `adb reverse` |
+| `android/` | Android 13+, USB or wireless debugging on | Reports the panel, decodes and shows frames 1:1, plays sound |
+| `companion/` | Windows 11, unelevated | Builds the EDID, captures, encodes, streams through `adb reverse` or directly over Wi-Fi |
 | `driver/` | Windows 11, UMDF | Virtual display (IddCx) that offers exactly one mode, the one in the EDID |
 
 ## Set up
@@ -45,6 +45,20 @@ out\companion\aum-companion.exe run                                             
 Runs with `--seconds` also read SurfaceFlinger's present times: the `on screen` and `capture to on screen` lines and the PASS or FAIL are what really reached the panel, and `panel` is the rate it really runs at. Keep the PC awake and unlocked: with its screen off, Windows gives the virtual monitor no frames and timers run late.
 
 `tools\driver-events.ps1` prints the driver's messages from the Application event log.
+
+### Over Wi-Fi
+
+`--connect` streams straight to the phone over TCP instead of through `adb reverse`, and the app holds a low-latency Wi-Fi lock. adb still starts the app, so turn on wireless debugging and pass that device as `--serial`. The phone listens, so Windows needs no firewall rule.
+
+```powershell
+out\companion\aum-companion.exe run --connect <phone IPv4 address> --serial <wireless adb serial>
+```
+
+Nothing authenticates or encrypts this link yet: the picture crosses the network in the clear, and while the app shows it, anyone on the network can connect to the phone. Use it only on a network you trust.
+
+A Wi-Fi run does not reach the phone through adb once it streams, because that stalled the picture for seconds at a time. So the 1:1 check and the `on screen` lines are off; `--phone-checks on` runs them, knowing that they can disturb what they measure.
+
+Without adb traffic on a 6 GHz Wi-Fi 7 network, 5 minutes on an idle PC showed no gap over 50 ms between frames. With a game running, a freeze of under a second came about every 4 minutes.
 
 ## Structure
 
