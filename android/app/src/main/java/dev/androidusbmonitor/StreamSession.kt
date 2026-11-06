@@ -3,6 +3,7 @@ package dev.androidusbmonitor
 import android.os.Process
 import android.util.Log
 import android.view.Surface
+import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.concurrent.thread
@@ -14,6 +15,7 @@ class StreamSession(
     private val surface: Surface,
     private val hello: String,
     private val presentationDeadlineNs: Long,
+    private val overWifi: Boolean,
     private val onStreaming: () -> Unit,
     private val onWaiting: () -> Unit,
 ) {
@@ -22,17 +24,19 @@ class StreamSession(
 
     private val worker = thread(name = "stream", isDaemon = true) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
+        // Open only while this session shows the picture, so that no port stays open behind it.
+        val listener = if (overWifi) ConnectionListener(InetSocketAddress(STREAM_PORT)) else null
         while (!stopped) {
             onWaiting()
-            runCatching { runConnection() }.onFailure { Log.i(TAG, "connection ended: $it") }
+            runCatching { runConnection(listener?.accept() ?: Connection.open()) }.onFailure { Log.i(TAG, "connection ended: $it") }
             if (!stopped) {
                 Thread.sleep(RECONNECT_DELAY_MS)
             }
         }
+        listener?.close()
     }
 
-    private fun runConnection() {
-        val link = Connection.open()
+    private fun runConnection(link: Connection) {
         connection = link
         var decoder: VideoDecoder? = null
         var audio: AudioPlayer? = null

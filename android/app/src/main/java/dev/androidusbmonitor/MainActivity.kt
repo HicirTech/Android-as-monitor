@@ -21,6 +21,7 @@ import android.widget.TextView
 
 private const val MODE_SWITCH_TIMEOUT_MS = 1500L
 private const val DEFAULT_AUDIO_SAMPLE_RATE = 48000
+private const val EXTRA_WIFI = "wifi"
 
 class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayListener {
     private lateinit var surfaceView: SurfaceView
@@ -33,6 +34,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayL
     private var hasWindowFocus = false
     private var modeSettled = false
     private var session: StreamSession? = null
+    private val overWifi get() = intent.getBooleanExtra(EXTRA_WIFI, false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -141,6 +143,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayL
             target,
             hello,
             display.presentationDeadlineNanos,
+            overWifi,
             onStreaming = { mainHandler.post { status.visibility = View.GONE } },
             onWaiting = {
                 mainHandler.post {

@@ -32,13 +32,19 @@ android {
     }
 }
 
-// Runs the app's pure logic on the build machine as a plain main(), like the companion's tests.
-tasks.register('testAppLogic', JavaExec) {
-    dependsOn 'compileReleaseUnitTestKotlin'
-    mainClass = 'dev.androidusbmonitor.VsyncSlotsTestKt'
-    classpath = files(
-        layout.buildDirectory.dir('tmp/kotlin-classes/release'),
-        layout.buildDirectory.dir('tmp/kotlin-classes/releaseUnitTest'),
-        { configurations.releaseUnitTestRuntimeClasspath },
-    )
+// Runs the app's logic on the build machine as plain main()s, like the companion's tests.
+def appLogicTests = ['VsyncSlots', 'Wire'].collect { name ->
+    tasks.register("test$name", JavaExec) {
+        dependsOn 'compileReleaseUnitTestKotlin'
+        mainClass = "dev.androidusbmonitor.${name}TestKt"
+        classpath = files(
+            layout.buildDirectory.dir('tmp/kotlin-classes/release'),
+            layout.buildDirectory.dir('tmp/kotlin-classes/releaseUnitTest'),
+            { configurations.releaseUnitTestRuntimeClasspath },
+        )
+    }
+}
+
+tasks.register('testAppLogic') {
+    dependsOn appLogicTests
 }
