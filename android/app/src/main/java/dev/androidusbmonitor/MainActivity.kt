@@ -85,8 +85,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayL
         val target = bestNativeMode(display)
         window.attributes = window.attributes.apply { preferredDisplayModeId = target.modeId }
         // The buffer must be the panel's real pixels even on devices that lay their UI out at a lower resolution.
-        val width = maxOf(target.physicalWidth, target.physicalHeight)
-        val height = minOf(target.physicalWidth, target.physicalHeight)
+        val width = TvPanel.current?.width ?: maxOf(target.physicalWidth, target.physicalHeight)
+        val height = TvPanel.current?.height ?: minOf(target.physicalWidth, target.physicalHeight)
         surfaceView.holder.setFixedSize(width, height)
 
         getSystemService(DisplayManager::class.java).registerDisplayListener(this, mainHandler)
