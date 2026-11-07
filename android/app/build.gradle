@@ -33,7 +33,7 @@ android {
 }
 
 // Runs the app's logic on the build machine as plain main()s, like the companion's tests.
-def appLogicTests = ['VsyncSlots', 'Wire'].collect { name ->
+def appLogicTests = ['VsyncSlots', 'Wire', 'HevcSpsTiming'].collect { name ->
     tasks.register("test$name", JavaExec) {
         dependsOn 'compileReleaseUnitTestKotlin'
         mainClass = "dev.androidusbmonitor.${name}TestKt"

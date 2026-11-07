@@ -16,7 +16,8 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "AndroidUsbMonitor"
 private const val PTS_MICROSECONDS_PER_FRAME_ID = 1000L
-// The one tunneled decoder so far measures the rate from the timestamps and halves a 4K stream above 60 fps. It shows frames as they arrive, whatever they say.
+// The one tunneled decoder so far halves a 4K stream above 60 fps, reading the rate from the SPS and measuring it from the timestamps.
+// So both say this. It shows frames as they arrive, whatever they say.
 private const val TUNNELED_DECLARED_FPS = 60
 private const val TRACE_CAPACITY = 1024
 private const val INPUT_WAIT_MS = 20L
@@ -24,7 +25,7 @@ private const val MAX_INPUT_BUFFERS = 64
 
 class VideoDecoder(
     surface: Surface,
-    mime: String,
+    private val mime: String,
     width: Int,
     height: Int,
     refreshHz: Float,
@@ -149,9 +150,21 @@ class VideoDecoder(
         receivedNs[slot] = arrivedNs
         val buffer = codec.getInputBuffer(index) ?: error("decoder returned no input buffer")
         buffer.clear()
-        buffer.put(data, 0, length)
+        val rewritten = if (tunneled && isKeyframe) withTunneledRate(data, length) else null
+        buffer.put(rewritten ?: data, 0, rewritten?.size ?: length)
         queuedNs[slot] = System.nanoTime()
-        codec.queueInputBuffer(index, 0, length, frameId * ptsUsPerFrame, 0)
+        codec.queueInputBuffer(index, 0, rewritten?.size ?: length, frameId * ptsUsPerFrame, 0)
+    }
+
+    private fun withTunneledRate(data: ByteArray, length: Int): ByteArray? {
+        if (mime != MediaFormat.MIMETYPE_VIDEO_HEVC) {
+            return null
+        }
+        val rewritten = withDeclaredHevcFrameRate(data, length, TUNNELED_DECLARED_FPS)
+        if (rewritten == null) {
+            Log.w(TAG, "keyframe keeps its declared rate, so the decoder may halve the stream")
+        }
+        return rewritten
     }
 
     fun release() {
