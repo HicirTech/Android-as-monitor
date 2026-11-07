@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -139,9 +140,15 @@ class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayL
         if (session != null || !hasWindowFocus || !modeSettled) {
             return
         }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && TvPanel.current == null) {
+            status.text = "This device needs Android 13 or newer"
+            return
+        }
         val panel = measurePanel(display)
-        // A frame rate request keeps adaptive panels from dropping below the rate that was just reported to the PC.
-        target.setFrameRate(panel.refreshHz, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ALWAYS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // A frame rate request keeps adaptive panels from dropping below the rate that was just reported to the PC.
+            target.setFrameRate(panel.refreshHz, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ALWAYS)
+        }
 
         val nativeRate = getSystemService(Context.AUDIO_SERVICE).let { it as AudioManager }
             .getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: DEFAULT_AUDIO_SAMPLE_RATE

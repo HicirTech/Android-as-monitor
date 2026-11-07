@@ -7,8 +7,8 @@ android {
 
     defaultConfig {
         applicationId 'dev.androidusbmonitor'
-        // Choreographer's frame timelines, which give each panel's own vsyncs and deadlines.
-        minSdk 33
+        // Android 11 is for the one TV, which plays tunneled. Everything else needs 33: Choreographer's frame timelines give each panel's own vsyncs and deadlines.
+        minSdk 30
         targetSdk 36
         versionCode 1
         versionName '0.1.0'
