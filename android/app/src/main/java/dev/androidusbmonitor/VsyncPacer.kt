@@ -1,12 +1,18 @@
 package dev.androidusbmonitor
 
+import android.annotation.TargetApi
+import android.os.Build
 import android.os.Handler
 import android.util.Log
 import android.view.Choreographer
 
 private const val TAG = "AndroidUsbMonitor"
 
-/** Follows the vsyncs the system predicts for this panel. Everything runs on the thread of [handler], which needs no locks. */
+/**
+ * Follows the vsyncs the system predicts for this panel. Everything runs on the thread of [handler], which needs no locks.
+ * Android 13 and newer: MainActivity turns older devices away, apart from a TV that plays tunneled and has no use for this.
+ */
+@TargetApi(Build.VERSION_CODES.TIRAMISU)
 class VsyncPacer(private val handler: Handler, private val presentationDeadlineNs: Long) : Choreographer.VsyncCallback {
     private val slots = VsyncSlots()
     private var choreographer: Choreographer? = null

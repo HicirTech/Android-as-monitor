@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -85,8 +86,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayL
         val target = bestNativeMode(display)
         window.attributes = window.attributes.apply { preferredDisplayModeId = target.modeId }
         // The buffer must be the panel's real pixels even on devices that lay their UI out at a lower resolution.
-        val width = maxOf(target.physicalWidth, target.physicalHeight)
-        val height = minOf(target.physicalWidth, target.physicalHeight)
+        val width = TvPanel.current?.width ?: maxOf(target.physicalWidth, target.physicalHeight)
+        val height = TvPanel.current?.height ?: minOf(target.physicalWidth, target.physicalHeight)
         surfaceView.holder.setFixedSize(width, height)
 
         getSystemService(DisplayManager::class.java).registerDisplayListener(this, mainHandler)
@@ -139,18 +140,27 @@ class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayL
         if (session != null || !hasWindowFocus || !modeSettled) {
             return
         }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && TvPanel.current == null) {
+            status.text = "This device needs Android 13 or newer"
+            return
+        }
         val panel = measurePanel(display)
-        // A frame rate request keeps adaptive panels from dropping below the rate that was just reported to the PC.
-        target.setFrameRate(panel.refreshHz, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ALWAYS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // A frame rate request keeps adaptive panels from dropping below the rate that was just reported to the PC.
+            target.setFrameRate(panel.refreshHz, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ALWAYS)
+        }
 
         val nativeRate = getSystemService(Context.AUDIO_SERVICE).let { it as AudioManager }
             .getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: DEFAULT_AUDIO_SAMPLE_RATE
         val hello = buildHello(this, panel, surfaceWidth, surfaceHeight, nativeRate)
+        // This TV's SurfaceFlinger stays at 60 Hz whatever the panel can do, so its picture has to go around it.
+        val tunnelAudioSession = TvPanel.current?.let { getSystemService(AudioManager::class.java).generateAudioSessionId() }
         session = StreamSession(
             target,
             hello,
             display.presentationDeadlineNanos,
             overWifi,
+            tunnelAudioSession,
             onStreaming = { mainHandler.post { status.visibility = View.GONE } },
             onWaiting = {
                 mainHandler.post {

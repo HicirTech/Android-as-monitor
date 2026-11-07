@@ -44,7 +44,7 @@ fun measurePanel(display: Display): PanelSpec {
     val naturalHeightMm = mode.physicalHeight / metrics.ydpi * MM_PER_INCH
     val isNaturallyLandscape = mode.physicalWidth >= mode.physicalHeight
 
-    return PanelSpec(
+    val reported = PanelSpec(
         panelWidth = max(mode.physicalWidth, mode.physicalHeight),
         panelHeight = min(mode.physicalWidth, mode.physicalHeight),
         refreshHz = mode.refreshRate,
@@ -56,6 +56,15 @@ fun measurePanel(display: Display): PanelSpec {
         rotation = display.rotation,
         supportedModes = display.supportedModes.joinToString(" ") { "${it.physicalWidth}x${it.physicalHeight}@${it.refreshRate}" },
     )
+    return TvPanel.current?.let {
+        reported.copy(
+            panelWidth = it.width,
+            panelHeight = it.height,
+            refreshHz = it.refreshHz,
+            xdpi = reported.xdpi * it.width / reported.panelWidth,
+            ydpi = reported.ydpi * it.height / reported.panelHeight,
+        )
+    } ?: reported
 }
 
 fun findDecoder(mime: String, width: Int, height: Int, fps: Int): DecoderSupport? {

@@ -16,6 +16,7 @@ class StreamSession(
     private val hello: String,
     private val presentationDeadlineNs: Long,
     private val overWifi: Boolean,
+    private val tunnelAudioSession: Int?,
     private val onStreaming: () -> Unit,
     private val onWaiting: () -> Unit,
 ) {
@@ -58,6 +59,7 @@ class StreamSession(
                             start.getValue("refreshHz").toFloat(),
                             start["decoder"],
                             presentationDeadlineNs,
+                            tunnelAudioSession,
                             link,
                             onStreaming,
                         )

@@ -1,6 +1,7 @@
 package dev.androidusbmonitor
 
 import android.media.MediaCodec
+import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Handler
@@ -15,24 +16,30 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "AndroidUsbMonitor"
 private const val PTS_MICROSECONDS_PER_FRAME_ID = 1000L
+// The one tunneled decoder so far halves a 4K stream above 60 fps, reading the rate from the SPS and measuring it from the timestamps.
+// So both say this. It shows frames as they arrive, whatever they say.
+private const val TUNNELED_DECLARED_FPS = 60
 private const val TRACE_CAPACITY = 1024
 private const val INPUT_WAIT_MS = 20L
 private const val MAX_INPUT_BUFFERS = 64
 
 class VideoDecoder(
     surface: Surface,
-    mime: String,
+    private val mime: String,
     width: Int,
     height: Int,
     refreshHz: Float,
     requestedDecoder: String?,
     presentationDeadlineNs: Long,
+    tunnelAudioSession: Int?,
     private val connection: Connection,
     private val onFirstFrameShown: () -> Unit,
 ) {
     private val thread = HandlerThread("video-decoder", Process.THREAD_PRIORITY_URGENT_DISPLAY).apply { start() }
     private val handler = Handler(thread.looper)
-    private val pacer = VsyncPacer(handler, presentationDeadlineNs)
+    private val tunneled = tunnelAudioSession != null
+    private val pacer = if (tunneled) null else VsyncPacer(handler, presentationDeadlineNs)
+    private val ptsUsPerFrame = if (tunneled) 1_000_000L / TUNNELED_DECLARED_FPS else PTS_MICROSECONDS_PER_FRAME_ID
     private val availableInputs = ArrayBlockingQueue<Int>(MAX_INPUT_BUFFERS)
     private val codec: MediaCodec
 
@@ -53,6 +60,11 @@ class VideoDecoder(
             setInteger("vendor.qti-ext-dec-low-latency.enable", 1)
             setInteger("vendor.rtc-ext-dec-low-latency.enable", 1)
             setInteger("vendor.low-latency.enable", 1)
+            if (tunnelAudioSession != null) {
+                // Straight to the video plane, past SurfaceFlinger and its refresh rate.
+                setFeatureEnabled(MediaCodecInfo.CodecCapabilities.FEATURE_TunneledPlayback, true)
+                setInteger(MediaFormat.KEY_AUDIO_SESSION_ID, tunnelAudioSession)
+            }
         }
         val name = requestedDecoder
             ?: MediaCodecList(MediaCodecList.REGULAR_CODECS).findDecoderForFormat(format)
@@ -61,6 +73,9 @@ class VideoDecoder(
         Log.i(TAG, "decoder $name for $mime ${width}x$height at $refreshHz Hz")
         codec = MediaCodec.createByCodecName(name)
         codec.setCallback(callback(), handler)
+        if (tunneled) {
+            codec.setOnFrameRenderedListener({ _, ptsUs, renderedNs -> onTunneledFrameRendered(ptsUs, renderedNs) }, handler)
+        }
         codec.configure(format, surface, null, 0)
         codec.setVideoScalingMode(MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT)
         codec.start()
@@ -72,6 +87,7 @@ class VideoDecoder(
         }
 
         override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
+            val pacer = checkNotNull(pacer) { "a tunneled decoder has no output buffers" }
             val frameId = info.presentationTimeUs / PTS_MICROSECONDS_PER_FRAME_ID
             val slot = (frameId % TRACE_CAPACITY).toInt()
             val nowNs = System.nanoTime()
@@ -95,6 +111,18 @@ class VideoDecoder(
         }
 
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) = Unit
+    }
+
+    /** A tunneled decoder keeps its output buffers, and only says when each frame reached the video plane. */
+    private fun onTunneledFrameRendered(ptsUs: Long, renderedNs: Long) {
+        val frameId = ptsUs / ptsUsPerFrame
+        val slot = (frameId % TRACE_CAPACITY).toInt()
+        decodedNs[slot] = System.nanoTime()
+        sendStats(frameId, slot, renderedNs)
+        if (!firstFrameShown) {
+            firstFrameShown = true
+            onFirstFrameShown()
+        }
     }
 
     private fun sendStats(frameId: Long, slot: Int, presentNs: Long) {
@@ -122,13 +150,25 @@ class VideoDecoder(
         receivedNs[slot] = arrivedNs
         val buffer = codec.getInputBuffer(index) ?: error("decoder returned no input buffer")
         buffer.clear()
-        buffer.put(data, 0, length)
+        val rewritten = if (tunneled && isKeyframe) withTunneledRate(data, length) else null
+        buffer.put(rewritten ?: data, 0, rewritten?.size ?: length)
         queuedNs[slot] = System.nanoTime()
-        codec.queueInputBuffer(index, 0, length, frameId * PTS_MICROSECONDS_PER_FRAME_ID, 0)
+        codec.queueInputBuffer(index, 0, rewritten?.size ?: length, frameId * ptsUsPerFrame, 0)
+    }
+
+    private fun withTunneledRate(data: ByteArray, length: Int): ByteArray? {
+        if (mime != MediaFormat.MIMETYPE_VIDEO_HEVC) {
+            return null
+        }
+        val rewritten = withDeclaredHevcFrameRate(data, length, TUNNELED_DECLARED_FPS)
+        if (rewritten == null) {
+            Log.w(TAG, "keyframe keeps its declared rate, so the decoder may halve the stream")
+        }
+        return rewritten
     }
 
     fun release() {
-        pacer.stop()
+        pacer?.stop()
         runCatching { codec.stop() }
         runCatching { codec.release() }
         thread.quitSafely()
