@@ -146,11 +146,14 @@ class MainActivity : Activity(), SurfaceHolder.Callback, DisplayManager.DisplayL
         val nativeRate = getSystemService(Context.AUDIO_SERVICE).let { it as AudioManager }
             .getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: DEFAULT_AUDIO_SAMPLE_RATE
         val hello = buildHello(this, panel, surfaceWidth, surfaceHeight, nativeRate)
+        // This TV's SurfaceFlinger stays at 60 Hz whatever the panel can do, so its picture has to go around it.
+        val tunnelAudioSession = TvPanel.current?.let { getSystemService(AudioManager::class.java).generateAudioSessionId() }
         session = StreamSession(
             target,
             hello,
             display.presentationDeadlineNanos,
             overWifi,
+            tunnelAudioSession,
             onStreaming = { mainHandler.post { status.visibility = View.GONE } },
             onWaiting = {
                 mainHandler.post {
