@@ -36,6 +36,8 @@ namespace {
 
 constexpr const char* kAppPackage = "dev.androidusbmonitor";
 constexpr int kPhoneConnectTimeoutMs = 20000;
+// Someone has to walk to the screen and open the page.
+constexpr int kBrowserConnectTimeoutMs = 15 * 60 * 1000;
 constexpr int kMonitorActiveTimeoutMs = 10000;
 constexpr int kSwapChainTimeoutMs = 5000;
 constexpr int kAudioEndpointSettleMs = 3000;
@@ -224,30 +226,42 @@ int RunMonitor(const Options& options) {
     stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     SetConsoleCtrlHandler(OnConsoleControl, TRUE);
 
-    const Adb adb(Adb::Locate(options.Text(L"adb")), Narrow(options.Text(L"serial")));
+    // A browser reaches the stream port through tools/browser-relay.ts. It has no adb, so neither the app launch nor the phone checks apply.
+    const bool forBrowser = options.Text(L"client") == L"browser";
+    std::optional<Adb> adb;
+    if (!forBrowser) {
+        adb.emplace(Adb::Locate(options.Text(L"adb")), Narrow(options.Text(L"serial")));
+    }
     const std::string port = std::to_string(kStreamPort);
     const std::string wifiAddress = Narrow(options.Text(L"connect"));
     const bool overWifi = !wifiAddress.empty();
     // Over Wi-Fi these checks reach the phone through adb on the same radio, and they stalled the picture for seconds at a time.
-    const bool phoneChecks = !overWifi || options.Text(L"phone-checks") == L"on";
-    if (!phoneChecks) {
+    const bool phoneChecks = !forBrowser && (!overWifi || options.Text(L"phone-checks") == L"on");
+    if (overWifi && !phoneChecks) {
         std::puts("phone checks off, they stall the picture over Wi-Fi; --phone-checks on runs them");
     }
 
-    // A copy left running from an earlier session would otherwise connect first and then be killed by the restart.
-    adb.Run(std::string("shell am force-stop ") + kAppPackage);
     std::optional<StreamListener> listener;
-    if (!overWifi) {
+    if (forBrowser) {
         listener.emplace(kStreamPort);
-        adb.Run("reverse localabstract:" + std::string(kStreamSocketName) + " tcp:" + port);
+        std::puts("waiting for the browser: start tools\\browser-relay.ts and open its page on the screen...");
+    } else {
+        // A copy left running from an earlier session would otherwise connect first and then be killed by the restart.
+        adb->Run(std::string("shell am force-stop ") + kAppPackage);
+        if (!overWifi) {
+            listener.emplace(kStreamPort);
+            adb->Run("reverse localabstract:" + std::string(kStreamSocketName) + " tcp:" + port);
+        }
+        adb->Run(std::string("shell am start -n ") + kAppPackage + "/.MainActivity" + (overWifi ? " --ez wifi true" : ""));
+        std::puts("waiting for the phone app...");
     }
-    adb.Run(std::string("shell am start -n ") + kAppPackage + "/.MainActivity" + (overWifi ? " --ez wifi true" : ""));
 
-    std::puts("waiting for the phone app...");
-    const SOCKET socket = overWifi ? ConnectStream(wifiAddress, kStreamPort, kPhoneConnectTimeoutMs) : listener->Accept(kPhoneConnectTimeoutMs);
+    const SOCKET socket = overWifi ? ConnectStream(wifiAddress, kStreamPort, kPhoneConnectTimeoutMs)
+                                   : listener->Accept(forBrowser ? kBrowserConnectTimeoutMs : kPhoneConnectTimeoutMs);
     if (socket == INVALID_SOCKET) {
-        throw std::runtime_error(overWifi ? "cannot reach the phone app at " + wifiAddress + "; is the address right and the screen unlocked?"
-                                          : "the phone app did not connect; is it installed and the screen unlocked?");
+        throw std::runtime_error(forBrowser ? "no browser connected in 15 minutes"
+                                 : overWifi ? "cannot reach the phone app at " + wifiAddress + "; is the address right and the screen unlocked?"
+                                            : "the phone app did not connect; is it installed and the screen unlocked?");
     }
     StreamConnection connection(socket);
 
@@ -258,13 +272,17 @@ int RunMonitor(const Options& options) {
                 spec.avcDecoder.c_str(), spec.avcCoversNative ? "rated" : "not rated");
     std::printf("reported: xdpi %s, ydpi %s, densityDpi %s, modes %s\n", spec.raw.count("xdpi") ? spec.raw.at("xdpi").c_str() : "?", spec.raw.count("ydpi") ? spec.raw.at("ydpi").c_str() : "?",
                 spec.raw.count("densityDpi") ? spec.raw.at("densityDpi").c_str() : "?", spec.raw.count("supportedModes") ? spec.raw.at("supportedModes").c_str() : "?");
-    const std::string usbSpeed = overWifi ? std::string{} : adb.RunOrEmpty("shell cat /sys/class/udc/*/current_speed");
+    const std::string usbSpeed = overWifi || forBrowser ? std::string{} : adb->RunOrEmpty("shell cat /sys/class/udc/*/current_speed");
     if (!usbSpeed.empty()) {
         std::printf("USB link: %s", usbSpeed.c_str());
     }
     if (spec.surfaceWidth != spec.width || spec.surfaceHeight != spec.height) {
         throw std::runtime_error("the app surface is " + std::to_string(spec.surfaceWidth) + "x" + std::to_string(spec.surfaceHeight) +
                                  ", not the native mode: pixels would not map 1:1");
+    }
+    if (spec.width % 2 != 0 || spec.height % 2 != 0) {
+        // NV12 and both encoders work in 2x2 blocks.
+        throw std::runtime_error("the panel is " + std::to_string(spec.width) + "x" + std::to_string(spec.height) + ": the encoder needs an even width and height");
     }
 
     const int composeMultiple = static_cast<int>(options.Number(L"compose-multiple", kDefaultComposeMultiple));
@@ -420,7 +438,7 @@ int RunMonitor(const Options& options) {
         while (WaitForSingleObject(stopEvent, 1000) == WAIT_TIMEOUT) {
             stats.PrintSecond(refresh.value());
             if (++elapsedSeconds == kPhoneLayerCheckAfterSeconds && phoneChecks) {
-                ReportPhoneLayer(adb);
+                ReportPhoneLayer(*adb);
             }
             if (seconds > 0 && static_cast<double>(NowNs() - startedNs) / 1e9 >= seconds) {
                 SetEvent(stopEvent);
@@ -432,7 +450,7 @@ int RunMonitor(const Options& options) {
     std::thread presentSampler;
     if (seconds > 0 && phoneChecks) {
         stats.KeepCaptureTimes();
-        presentSampler = std::thread([&] { SamplePresentTimes(adb, cadence); });
+        presentSampler = std::thread([&] { SamplePresentTimes(*adb, cadence); });
     }
 
     // Fixed-length runs are the frame rate test, so they need a desktop that changes every frame.
@@ -472,7 +490,7 @@ int RunMonitor(const Options& options) {
         std::fclose(csv);
     }
     if (linkLost && seconds <= 0) {
-        std::puts("the phone disconnected");
+        std::puts(forBrowser ? "the browser disconnected" : "the phone disconnected");
     }
     return 0;
 }

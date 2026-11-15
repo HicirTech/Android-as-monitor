@@ -1,10 +1,11 @@
 # Android USB Monitor
 
-Spike: an Android phone, without root, becomes a Windows display over one USB cable or Wi-Fi, at its panel's own resolution, size and refresh rate, with picture and sound in one low-latency stream.
+Spike: an Android phone without root, or [a web browser](#in-a-browser) on any screen, becomes a Windows display over one USB cable or Wi-Fi, at its panel's own resolution, size and refresh rate, with picture and sound in one low-latency stream.
 
 | Part | Runs on | Role |
 | --- | --- | --- |
 | `android/` | Android 13+, or Android 11 on [the TV](#on-a-tv), USB or wireless debugging on | Reports the panel, decodes and shows frames 1:1, plays sound |
+| `browser/` | A Chromium browser, on an HTTPS page | The same client as a web page, decoding with WebCodecs |
 | `companion/` | Windows 11, unelevated | Builds the EDID, captures, encodes, streams through `adb reverse` or directly over Wi-Fi |
 | `driver/` | Windows 11, UMDF | Virtual display (IddCx) that offers exactly one mode, the one in the EDID |
 
@@ -75,13 +76,29 @@ From capture to the decoder's report that a frame was rendered, the median is ab
 - The decoder holds the newest 2 frames until newer ones arrive, so the last change on a desktop that goes still can stay hidden until the next one.
 - What reaches the panel has not been measured, only what the decoder reports.
 
+### In a browser
+
+A screen with a recent Chromium browser can be the monitor, a car's centre screen for one. The monitor is the page: its size in device pixels, rounded down to even numbers for the encoder, at the refresh rate the page measures. A browser cannot tell how big its screen is, so the page takes the whole screen's diagonal in inches as `?diagonal=`, 15.4 if it is left out.
+
+```powershell
+bun tools\browser-relay.ts                              # serves browser\ on port 27190 and joins each page to the companion
+out\companion\aum-companion.exe run --client browser    # waits up to 15 minutes for a page instead of starting the app
+```
+
+- Browsers decode video only on HTTPS pages, so the relay needs a reverse proxy with a real certificate in front of it, with WebSockets on. Some browsers, car browsers among them, refuse private addresses even behind a name, so that name may have to point at a public address that the router loops back.
+- The relay serves a page only with this PC's key, which it makes on its first start in `%USERPROFILE%\.android-usb-monitor\browser-key.txt`; write your own there and restart the relay if you prefer. Open the page as `https://<name>/#key=<key>`: the fragment never leaves the browser, and the page hands the key over as the WebSocket subprotocol, so it stays out of proxy logs. An address list on the proxy alone is not enough, since a proxy that trusts `X-Real-IP` from CDN ranges can be talked past.
+- Tap the screen for its statistics and an Exit button, which ends the stream and so unplugs the monitor. One run of the companion serves one page. The page also sends its statistics to the relay every 2 seconds, and the relay prints them.
+
+In a car's browser over 5 GHz Wi-Fi, at 1922x1080 and 60 Hz, capture to the vsync a frame is drawn on took 15 ms at the median and 23 ms at p95. The phase between the PC and the screen slides, so about a fifth of the frames wait one vsync, and 2.4% were skipped, mostly in bursts. Sound queues 40 to 100 ms in the page, on top of about 270 ms that the car's browser reports for its own audio path.
+
 ## Structure
 
 ```text
 android/        App: PanelSpec reads the panel, TvPanel knows the panel a TV hides, StreamSession owns the link, VideoDecoder and AudioPlayer play it, HevcSpsTiming changes the rate a stream declares, VsyncSlots gives each frame its own vsync
+browser/        Web client: client is the flow, wire mirrors the stream protocol, frame-pacer gives each frame its own vsync, pcm-player plays sound
 companion/      PC program: run_monitor is the flow, edid builds the monitor description, video_pipeline drops frames before encoding, never after, nvenc_encoder and mf_encoder encode, gpu_clock_holder keeps NVIDIA out of its idle clocks, phone_cadence reads what reached the panel
 driver/         IddCx driver: control_pipe unplugs the monitor when the companion goes away, frame_tap shares desktop frames with the companion
 shared/         What both sides must agree on: driver protocol, stream protocol, EDID timing
 third_party/    nvEncodeAPI.h at a pinned commit, see SOURCE.txt
-tools/          Toolchain, build, driver install and check scripts
+tools/          Toolchain, build, driver install and check scripts; browser-relay and the key it checks
 ```
